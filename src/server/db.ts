@@ -9,8 +9,9 @@ import {
   DossierCommandeGlobal,
   SuiviOF,
   MouvementStock,
-  ClientCodification
-} from '../types';
+  ClientCodification,
+  FicheTransfert
+} from '../types/index';
 import {
   INITIAL_ARTICLES,
   INITIAL_CHUTES_STOCK,
@@ -167,6 +168,20 @@ class AtelierDatabase {
         remarque TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_mvt_date ON mouvements_stock(date);
+
+      -- Table Fiches de Transfert & Bons de Livraison Transporteur
+      CREATE TABLE IF NOT EXISTS fiches_transfert (
+        id TEXT PRIMARY KEY,
+        numero_fiche TEXT NOT NULL,
+        mon_client TEXT NOT NULL,
+        nom_chauffeur TEXT,
+        date_livraison TEXT NOT NULL,
+        statut TEXT NOT NULL DEFAULT 'VALIDEE',
+        json_data TEXT NOT NULL,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_fiche_date ON fiches_transfert(date_livraison);
+      CREATE INDEX IF NOT EXISTS idx_fiche_client ON fiches_transfert(mon_client);
 
       -- Table Codification Clients & Agences (Préfixes automatiques et Repères)
       CREATE TABLE IF NOT EXISTS client_codifications (
@@ -561,12 +576,15 @@ class AtelierDatabase {
           article_code, designation, longueur_mm, quantite, remarque
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
+
       for (const m of mvts) {
         stmt.run(
           m.id, m.date, m.type, m.ofId || null, m.numCommande || null,
           m.nomClient || null, m.articleCode || null, m.designation || null,
           m.longueurMm || null, m.quantite || null, m.remarque || null
         );
+
+        // 1. Décompte des barres neuves
         if (m.type === 'SORTIE_BARRE_NEUVE' && m.articleCode) {
           const quantite = m.quantite || 1;
           this.db.prepare(
@@ -574,40 +592,116 @@ class AtelierDatabase {
           ).run(quantite, m.articleCode);
         }
 
+        // 2. Traitement des chutes (Profilés alu ou Toiles moustiquaires)
         if ((m.type === 'SORTIE_CHUTE' || m.type === 'ENTREE_CHUTE') && m.articleCode && m.longueurMm) {
-          const sheet = this.db.prepare('SELECT sheet_name FROM mapping_chutes WHERE code_art = ?').get(m.articleCode) as { sheet_name?: string } | undefined;
-          if (sheet?.sheet_name && sheet.sheet_name.toUpperCase() !== 'MAILLE MSTQ') {
-            const quantite = m.quantite || 1;
-            if (m.type === 'SORTIE_CHUTE') {
-              // Trouver la chute la plus proche (tolérance jusqu'à 5mm)
-              const matched = this.db.prepare(
-                'SELECT rowid, id, quantite FROM chutes_barres WHERE sheet_name = ? AND ABS(longueur - ?) <= 5.0 AND quantite > 0 ORDER BY ABS(longueur - ?) ASC LIMIT 1'
-              ).get(sheet.sheet_name, m.longueurMm, m.longueurMm) as { rowid?: number; id?: string; quantite?: number } | undefined;
+          // Résolution de l'onglet/famille de chute
+          let sheetName: string | undefined;
+          const mappedSheet = this.db.prepare('SELECT sheet_name FROM mapping_chutes WHERE code_art = ?').get(m.articleCode) as { sheet_name?: string } | undefined;
+          if (mappedSheet?.sheet_name) {
+            sheetName = mappedSheet.sheet_name;
+          } else {
+            const artRow = this.db.prepare('SELECT designation FROM articles WHERE code_art = ?').get(m.articleCode) as { designation?: string } | undefined;
+            if (artRow?.designation) {
+              sheetName = artRow.designation.trim();
+              this.db.prepare('INSERT OR IGNORE INTO chute_families (name) VALUES (?)').run(sheetName);
+              this.db.prepare('INSERT OR REPLACE INTO mapping_chutes (code_art, sheet_name) VALUES (?, ?)').run(m.articleCode, sheetName);
+            }
+          }
 
-              if (matched?.rowid) {
-                this.db.prepare(
-                  'UPDATE chutes_barres SET quantite = quantite - ? WHERE rowid = ?'
-                ).run(quantite, matched.rowid);
-                this.db.prepare('DELETE FROM chutes_barres WHERE quantite <= 0').run();
-              } else {
-                // Si aucune chute proche, décrémenter la plus grande disponible de l'onglet
-                const fallback = this.db.prepare(
-                  'SELECT rowid, quantite FROM chutes_barres WHERE sheet_name = ? AND quantite > 0 ORDER BY ABS(longueur - ?) ASC LIMIT 1'
-                ).get(sheet.sheet_name, m.longueurMm) as { rowid?: number; quantite?: number } | undefined;
-                if (fallback?.rowid) {
-                  this.db.prepare('UPDATE chutes_barres SET quantite = quantite - ? WHERE rowid = ?').run(quantite, fallback.rowid);
-                  this.db.prepare('DELETE FROM chutes_barres WHERE quantite <= 0').run();
+          if (sheetName) {
+            const quantite = m.quantite || 1;
+            const isMaille = sheetName.toUpperCase() === 'MAILLE MSTQ' || sheetName.toUpperCase().includes('MAILLE') || (m.designation && m.designation.toUpperCase().includes('MAILLE'));
+
+            if (isMaille) {
+              // Gestion spécifique Toile Moustiquaire
+              if (m.type === 'SORTIE_CHUTE') {
+                const matchedMaille = this.db.prepare(
+                  'SELECT id, dimension_fixe, plis FROM chutes_maille ORDER BY ABS(dimension_fixe - ?) ASC LIMIT 1'
+                ).get(m.longueurMm) as { id?: string; dimension_fixe?: number; plis?: number } | undefined;
+                if (matchedMaille?.id) {
+                  this.db.prepare('DELETE FROM chutes_maille WHERE id = ?').run(matchedMaille.id);
                 }
+              } else if (m.type === 'ENTREE_CHUTE' && m.longueurMm > 0) {
+                const plis = Math.max(1, Math.round(m.longueurMm / 20));
+                this.db.prepare(
+                  'INSERT INTO chutes_maille (id, dimension_fixe, plis) VALUES (?, ?, ?)'
+                ).run(`cht-m-${Date.now()}-${Math.floor(Math.random() * 1000)}`, m.longueurMm, plis);
               }
-            } else if (m.type === 'ENTREE_CHUTE' && m.longueurMm > 0) {
-              this.db.prepare(
-                'INSERT INTO chutes_barres (id, sheet_name, longueur, quantite) VALUES (?, ?, ?, ?)'
-              ).run(`cht-${Date.now()}-${Math.floor(Math.random() * 1000)}`, sheet.sheet_name, m.longueurMm, quantite);
+            } else {
+              // Gestion Profilés Barres Aluminium
+              if (m.type === 'SORTIE_CHUTE') {
+                // Recherche stricte dans une tolérance de +/- 10mm
+                const matched = this.db.prepare(
+                  'SELECT rowid, id, quantite, longueur FROM chutes_barres WHERE sheet_name = ? AND ABS(longueur - ?) <= 10.0 AND quantite > 0 ORDER BY ABS(longueur - ?) ASC LIMIT 1'
+                ).get(sheetName, m.longueurMm, m.longueurMm) as { rowid?: number; id?: string; quantite?: number; longueur?: number } | undefined;
+
+                if (matched?.rowid) {
+                  this.db.prepare(
+                    'UPDATE chutes_barres SET quantite = quantite - ? WHERE rowid = ?'
+                  ).run(quantite, matched.rowid);
+                  this.db.prepare('DELETE FROM chutes_barres WHERE quantite <= 0').run();
+                } else {
+                  // Recherche d'une chute de longueur supérieure ou égale (au moins longueur demandée - 10mm)
+                  const largerChute = this.db.prepare(
+                    'SELECT rowid, quantite, longueur FROM chutes_barres WHERE sheet_name = ? AND longueur >= ? - 10.0 AND quantite > 0 ORDER BY longueur ASC LIMIT 1'
+                  ).get(sheetName, m.longueurMm) as { rowid?: number; quantite?: number; longueur?: number } | undefined;
+
+                  if (largerChute?.rowid) {
+                    this.db.prepare('UPDATE chutes_barres SET quantite = quantite - ? WHERE rowid = ?').run(quantite, largerChute.rowid);
+                    this.db.prepare('DELETE FROM chutes_barres WHERE quantite <= 0').run();
+                  } else {
+                    // Si aucune chute compatible n'est trouvée, ne pas détruire arbitrairement une chute non liée
+                    console.warn(`[Stock] Sortie chute ${m.longueurMm}mm pour ${sheetName} non trouvée en inventaire physique.`);
+                  }
+                }
+              } else if (m.type === 'ENTREE_CHUTE' && m.longueurMm > 0) {
+                this.db.prepare(
+                  'INSERT INTO chutes_barres (id, sheet_name, longueur, quantite) VALUES (?, ?, ?, ?)'
+                ).run(`cht-${Date.now()}-${Math.floor(Math.random() * 1000)}`, sheetName, m.longueurMm, quantite);
+              }
             }
           }
         }
       }
+
+      // Mise à jour de l'OF en statut CLOTURE
       this.upsertSuiviOF(s);
+
+      // Synchronisation intelligente avec les Dossiers de Commande
+      try {
+        const cmdRefs = (s.numCommande || '')
+          .split(/[\s,+/]+/)
+          .map(c => c.trim().toLowerCase())
+          .filter(Boolean);
+
+        const allDossiers = this.getDossiers();
+        for (const dossier of allDossiers) {
+          const dossierRef = (dossier.refCommande || '').trim().toLowerCase();
+          const matchesCmd = cmdRefs.some(ref => ref && (dossierRef.includes(ref) || ref.includes(dossierRef)));
+          const matchesClient = s.nomClient && dossier.nomClientFinal &&
+            dossier.nomClientFinal.trim().toLowerCase() === s.nomClient.trim().toLowerCase();
+
+          if (matchesCmd || (matchesClient && dossier.statut !== 'FABRIQUE')) {
+            // Vérifier si tous les OF liés à ce dossier sont clôturés
+            const relatedOFs = (this.getSuivisOF() || []).filter(o => {
+              const oCmds = (o.numCommande || '').toLowerCase();
+              return cmdRefs.some(ref => oCmds.includes(ref)) ||
+                (o.nomClient && dossier.nomClientFinal && o.nomClient.toLowerCase() === dossier.nomClientFinal.toLowerCase());
+            });
+
+            const allClosed = relatedOFs.length > 0 && relatedOFs.every(o => o.id === s.id || o.statut === 'CLOTURE');
+            const newStatut = allClosed ? 'FABRIQUE' : 'EN_COURS';
+
+            if (dossier.statut !== newStatut) {
+              dossier.statut = newStatut;
+              this.upsertDossier(dossier);
+            }
+          }
+        }
+      } catch (dossierSyncErr) {
+        console.warn('Erreur synchronisation statut dossier lors de la clôture:', dossierSyncErr);
+      }
+
       this.db.exec('COMMIT');
     } catch (e) {
       this.db.exec('ROLLBACK');
@@ -739,6 +833,89 @@ class AtelierDatabase {
   }
 
   // ==========================================
+  // FICHES DE TRANSFERT & BONS DE LIVRAISON
+  // ==========================================
+  getFichesTransfert(): FicheTransfert[] {
+    const rows = this.db.prepare('SELECT json_data FROM fiches_transfert ORDER BY updated_at DESC').all() as any[];
+    return rows.map(r => {
+      try {
+        return JSON.parse(r.json_data);
+      } catch {
+        return null;
+      }
+    }).filter(Boolean);
+  }
+
+  saveFichesTransfert(fiches: FicheTransfert[]) {
+    this.db.exec('BEGIN TRANSACTION');
+    try {
+      this.db.exec('DELETE FROM fiches_transfert');
+      const stmt = this.db.prepare(`
+        INSERT INTO fiches_transfert (
+          id, numero_fiche, mon_client, nom_chauffeur,
+          date_livraison, statut, json_data
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const f of fiches) {
+        stmt.run(
+          f.id, f.numeroFiche, f.monClient, f.nomChauffeurPrincipal || null,
+          f.dateLivraison, f.statut || 'VALIDEE', JSON.stringify(f)
+        );
+      }
+      this.db.exec('COMMIT');
+    } catch (e) {
+      this.db.exec('ROLLBACK');
+      throw e;
+    }
+  }
+
+  upsertFicheTransfert(fiche: FicheTransfert) {
+    this.db.exec('BEGIN TRANSACTION');
+    try {
+      const stmt = this.db.prepare(`
+        INSERT OR REPLACE INTO fiches_transfert (
+          id, numero_fiche, mon_client, nom_chauffeur,
+          date_livraison, statut, json_data, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      `);
+      stmt.run(
+        fiche.id, fiche.numeroFiche, fiche.monClient, fiche.nomChauffeurPrincipal || null,
+        fiche.dateLivraison, fiche.statut || 'VALIDEE', JSON.stringify(fiche)
+      );
+
+      // Mettre à jour les dossiers de commande associés pour les marquer comme 'LIVRE'
+      if (Array.isArray(fiche.lignes)) {
+        for (const ligne of fiche.lignes) {
+          if (ligne.dossierId) {
+            const row = this.db.prepare('SELECT json_data FROM dossiers WHERE id = ?').get(ligne.dossierId) as { json_data?: string } | undefined;
+            if (row?.json_data) {
+              try {
+                const dossier: DossierCommandeGlobal = JSON.parse(row.json_data);
+                dossier.statut = 'LIVRE';
+                dossier.ficheTransfertId = fiche.id;
+                dossier.dateLivraison = fiche.dateLivraison;
+                dossier.nomChauffeur = ligne.nomChauffeur || fiche.nomChauffeurPrincipal;
+                this.upsertDossier(dossier);
+              } catch (err) {
+                console.error('Erreur mise à jour statut dossier lors création fiche transfert:', err);
+              }
+            }
+          }
+        }
+      }
+
+      this.db.exec('COMMIT');
+    } catch (e) {
+      this.db.exec('ROLLBACK');
+      throw e;
+    }
+  }
+
+  deleteFicheTransfert(id: string) {
+    this.db.prepare('DELETE FROM fiches_transfert WHERE id = ?').run(id);
+  }
+
+  // ==========================================
   // SYNC / MIGRATION TOTALE INITIALE
   // ==========================================
   fullSyncFromFrontend(data: {
@@ -750,6 +927,7 @@ class AtelierDatabase {
     suivisOF?: SuiviOF[];
     mouvements?: MouvementStock[];
     clientCodifications?: ClientCodification[];
+    fichesTransfert?: FicheTransfert[];
   }) {
     if (data.articles !== undefined) this.saveArticles(data.articles);
     if (data.chutesBarres !== undefined) this.saveChutesBarres(data.chutesBarres);
@@ -758,6 +936,7 @@ class AtelierDatabase {
     if (data.dossiers !== undefined) this.saveDossiers(data.dossiers);
     if (data.suivisOF !== undefined) this.saveSuivisOF(data.suivisOF);
     if (data.clientCodifications !== undefined) this.saveClientCodifications(data.clientCodifications);
+    if (data.fichesTransfert !== undefined) this.saveFichesTransfert(data.fichesTransfert);
     if (data.mouvements !== undefined) {
       this.db.exec('DELETE FROM mouvements_stock');
       if (data.mouvements.length > 0) this.addMouvements(data.mouvements);
@@ -773,7 +952,8 @@ class AtelierDatabase {
       dossiers: this.getDossiers(),
       suivisOF: this.getSuivisOF(),
       mouvements: this.getMouvements(),
-      clientCodifications: this.getClientCodifications()
+      clientCodifications: this.getClientCodifications(),
+      fichesTransfert: this.getFichesTransfert()
     };
   }
 
@@ -788,6 +968,7 @@ class AtelierDatabase {
       this.db.exec('DELETE FROM suivis_of');
       this.db.exec('DELETE FROM mouvements_stock');
       this.db.exec('DELETE FROM client_codifications');
+      this.db.exec('DELETE FROM fiches_transfert');
       this.db.prepare("INSERT OR REPLACE INTO app_meta (key, value) VALUES ('db_initialized', ?)").run(new Date().toISOString());
       this.db.exec('COMMIT');
     } catch (e) {

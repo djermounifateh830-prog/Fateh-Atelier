@@ -197,7 +197,27 @@ export function sqlitePlugin(): Plugin {
           return sendJson(res, { success: true });
         }
 
-        // --- 10. TÉLÉCHARGER LE FICHIER .DB PHYSIQUE ---
+        // --- 10. FICHES DE TRANSFERT & BONS DE LIVRAISON ---
+        if (url === '/api/fiches-transfert' && method === 'GET') {
+          return sendJson(res, { success: true, data: atelierDb.getFichesTransfert() });
+        }
+        if (url === '/api/fiches-transfert' && method === 'POST') {
+          const body = await parseBody(req);
+          atelierDb.saveFichesTransfert(Array.isArray(body) ? body : []);
+          return sendJson(res, { success: true });
+        }
+        if (url === '/api/fiches-transfert' && method === 'PUT') {
+          const body = await parseBody(req);
+          atelierDb.upsertFicheTransfert(body);
+          return sendJson(res, { success: true });
+        }
+        if (url.startsWith('/api/fiches-transfert/') && method === 'DELETE') {
+          const id = decodeURIComponent(url.replace('/api/fiches-transfert/', ''));
+          atelierDb.deleteFicheTransfert(id);
+          return sendJson(res, { success: true });
+        }
+
+        // --- 11. TÉLÉCHARGER LE FICHIER .DB PHYSIQUE ---
         if (url === '/api/db/download' && method === 'GET') {
           const dbPath = atelierDb.getDbFilePath();
           if (fs.existsSync(dbPath)) {
@@ -211,7 +231,7 @@ export function sqlitePlugin(): Plugin {
           }
         }
 
-        // --- 11. VIDER COMPLÈTEMENT LA BASE SQLITE ---
+        // --- 12. VIDER COMPLÈTEMENT LA BASE SQLITE ---
         if (url === '/api/db/wipe' && method === 'POST') {
           atelierDb.wipeAllData();
           return sendJson(res, { success: true, message: 'Base de données SQLite vidée avec succès' });

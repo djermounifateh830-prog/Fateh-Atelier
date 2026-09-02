@@ -5,10 +5,14 @@ import {
   Article,
   FamilleProduit,
   ChuteItem,
-  MappingChutes
+  MappingChutes,
+  DossierCommandeGlobal,
+  ClientCodification,
+  FicheTransfert
 } from '../../types';
 import { StorageService } from '../../services/storage';
 import { RetourOFModal } from '../common/RetourOFModal';
+import { FicheTransfertModal } from '../common/FicheTransfertModal';
 import {
   ClipboardCheck,
   Search,
@@ -33,12 +37,17 @@ import {
   ArrowUpDown,
   Edit2,
   Save,
-  Tag
+  Tag,
+  Truck,
+  FileCheck
 } from 'lucide-react';
 
 interface OrdresEnCoursTabProps {
   suivisOF: SuiviOF[];
   onRefreshData: () => void;
+  dossiers?: DossierCommandeGlobal[];
+  clientCodifications?: ClientCodification[];
+  fichesTransfert?: FicheTransfert[];
   articles?: Article[];
   chutesBarres?: Record<string, ChuteItem[]>;
   mapping?: MappingChutes;
@@ -47,13 +56,20 @@ interface OrdresEnCoursTabProps {
 export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
   suivisOF = [],
   onRefreshData,
+  dossiers = [],
+  clientCodifications = [],
+  fichesTransfert = [],
   articles = [],
   chutesBarres = {},
   mapping = {}
 }) => {
   const [recherche, setRecherche] = useState<string>('');
-  const [filtreStatut, setFiltreStatut] = useState<'TOUS' | 'EMIS' | 'RETOUR_EN_ATTENTE' | 'CLOTURE'>('TOUS');
+  const [filtreStatut, setFiltreStatut] = useState<'TOUS' | 'EMIS' | 'RETOUR_EN_ATTENTE' | 'CLOTURE' | 'LIVRE'>('TOUS');
   const [filtreFamille, setFiltreFamille] = useState<string>('TOUTES');
+
+  // Modal Fiche de Transfert
+  const [isFicheTransfertModalOpen, setIsFicheTransfertModalOpen] = useState<boolean>(false);
+  const [selectedFicheToView, setSelectedFicheToView] = useState<FicheTransfert | null>(null);
 
   // Actualisation automatique à l'ouverture de l'onglet
   useEffect(() => {
@@ -205,7 +221,19 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Bouton Créer Fiche de Transfert */}
+          <button
+            onClick={() => {
+              setSelectedFicheToView(null);
+              setIsFicheTransfertModalOpen(true);
+            }}
+            className="px-4 py-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 text-xs font-black rounded-xl flex items-center gap-2 shadow-md shadow-amber-500/20 transition cursor-pointer"
+          >
+            <Truck className="w-4 h-4" />
+            <span>Créer Fiche de Transfert</span>
+          </button>
+
           <button
             onClick={onRefreshData}
             className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-xl flex items-center gap-2 border border-slate-700 transition cursor-pointer shadow-sm"
@@ -217,7 +245,7 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
       </div>
 
       {/* ── KPIs & Compteurs ── */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3.5">
         <div
           onClick={() => setFiltreStatut('TOUS')}
           className={`p-4 rounded-xl border transition cursor-pointer ${
@@ -279,7 +307,22 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
             <CheckCircle2 className="w-4 h-4 text-emerald-400" />
           </div>
           <div className="text-2xl font-black text-emerald-400 font-mono mt-1">{stats.clotures}</div>
-          <div className="text-[11px] text-slate-500 mt-0.5">Stock réajusté avec succès</div>
+          <div className="text-[11px] text-slate-500 mt-0.5">Prêts pour transfert</div>
+        </div>
+
+        <div
+          onClick={() => {
+            setSelectedFicheToView(null);
+            setIsFicheTransfertModalOpen(true);
+          }}
+          className="p-4 rounded-xl border bg-amber-950/40 border-amber-500/40 hover:border-amber-400 transition cursor-pointer"
+        >
+          <div className="flex items-center justify-between text-xs text-amber-400 font-bold">
+            <span>🚚 Fiches Transfert</span>
+            <Truck className="w-4 h-4 text-amber-400" />
+          </div>
+          <div className="text-2xl font-black text-amber-300 font-mono mt-1">{fichesTransfert.length}</div>
+          <div className="text-[11px] text-amber-400/80 mt-0.5">Bons de livraison client</div>
         </div>
       </div>
 
@@ -784,6 +827,20 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
           </div>
         </div>
       )}
+
+      {/* ── Modal Fiche de Transfert ── */}
+      <FicheTransfertModal
+        isOpen={isFicheTransfertModalOpen}
+        onClose={() => {
+          setIsFicheTransfertModalOpen(false);
+          setSelectedFicheToView(null);
+        }}
+        dossiers={dossiers}
+        suivisOF={suivisOF}
+        clientCodifications={clientCodifications}
+        onSaved={onRefreshData}
+        ficheToView={selectedFicheToView}
+      />
     </div>
   );
 };

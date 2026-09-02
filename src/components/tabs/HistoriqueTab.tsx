@@ -171,6 +171,8 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
             <option value="TOUS">Tous les statuts</option>
             <option value="EN_ATTENTE">En attente</option>
             <option value="EN_COURS">En cours de fabrication</option>
+            <option value="CLOTURE">Clôturé / Prêt livraison</option>
+            <option value="LIVRE">Livré (Fiche de Transfert)</option>
             <option value="TERMINE">Terminé</option>
           </select>
         </div>
@@ -216,14 +218,18 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
 
                     <span
                       className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${
-                        dossier.statut === 'FABRIQUE' || (dossier.statut as string) === 'TERMINE'
+                        dossier.statut === 'LIVRE'
+                          ? 'bg-blue-950 text-blue-300 border border-blue-500/40'
+                          : dossier.statut === 'CLOTURE'
+                          ? 'bg-emerald-950 text-emerald-300 border border-emerald-500/40'
+                          : dossier.statut === 'FABRIQUE' || (dossier.statut as string) === 'TERMINE'
                           ? 'bg-emerald-950 text-emerald-300 border border-emerald-500/30'
                           : dossier.statut === 'EN_COURS'
                           ? 'bg-amber-950 text-amber-300 border border-amber-500/30'
                           : 'bg-purple-950 text-purple-300 border border-purple-500/30'
                       }`}
                     >
-                      {dossier.statut || 'EN_ATTENTE'}
+                      {dossier.statut === 'LIVRE' ? '🚚 LIVRÉ' : dossier.statut || 'EN_ATTENTE'}
                     </span>
                   </div>
 

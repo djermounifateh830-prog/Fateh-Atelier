@@ -7,7 +7,8 @@ import {
   DossierCommandeGlobal,
   SuiviOF,
   MouvementStock,
-  ClientCodification
+  ClientCodification,
+  FicheTransfert
 } from '../types';
 import {
   INITIAL_ARTICLES,
@@ -73,23 +74,28 @@ export class StorageService {
     suivisOF: SuiviOF[];
     mouvements: MouvementStock[];
     clientCodifications: ClientCodification[];
+    fichesTransfert: FicheTransfert[];
   }> {
     try {
       const startTime = performance.now();
-      const res = await fetch('/api/data');
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 4000);
+      const res = await fetch('/api/data', { signal: controller.signal });
+      clearTimeout(timeoutId);
       if (res.ok) {
         const json = await res.json();
         if (json.success && json.data) {
           const d = json.data;
           const elapsedMs = Math.round(performance.now() - startTime);
           console.log('📦 [SQLite] Connecté — Source unique de vérité.');
-          logger.sqlite('Init DB', `Connecté en ${elapsedMs}ms — ${d.articles?.length || 0} articles, ${Object.keys(d.chutesBarres || {}).length} familles de chutes, ${d.dossiers?.length || 0} dossiers, ${d.suivisOF?.length || 0} suivis OF, ${d.clientCodifications?.length || 0} codifications clients.`, {
+          logger.sqlite('Init DB', `Connecté en ${elapsedMs}ms — ${d.articles?.length || 0} articles, ${Object.keys(d.chutesBarres || {}).length} familles de chutes, ${d.dossiers?.length || 0} dossiers, ${d.suivisOF?.length || 0} suivis OF, ${d.clientCodifications?.length || 0} codifications clients, ${d.fichesTransfert?.length || 0} fiches de transfert.`, {
             articlesCount: d.articles?.length || 0,
             chutesFamiliesCount: Object.keys(d.chutesBarres || {}).length,
             dossiersCount: d.dossiers?.length || 0,
             suivisOFCount: d.suivisOF?.length || 0,
             mouvementsCount: d.mouvements?.length || 0,
-            codificationsCount: d.clientCodifications?.length || 0
+            codificationsCount: d.clientCodifications?.length || 0,
+            fichesTransfertCount: d.fichesTransfert?.length || 0
           });
 
           return {
@@ -100,7 +106,8 @@ export class StorageService {
             dossiers: Array.isArray(d.dossiers) ? d.dossiers : [],
             suivisOF: Array.isArray(d.suivisOF) ? d.suivisOF : [],
             mouvements: Array.isArray(d.mouvements) ? d.mouvements : [],
-            clientCodifications: Array.isArray(d.clientCodifications) && d.clientCodifications.length > 0 ? d.clientCodifications : INITIAL_CLIENT_CODIFICATIONS
+            clientCodifications: Array.isArray(d.clientCodifications) && d.clientCodifications.length > 0 ? d.clientCodifications : INITIAL_CLIENT_CODIFICATIONS,
+            fichesTransfert: Array.isArray(d.fichesTransfert) ? d.fichesTransfert : []
           };
         }
       }
@@ -116,7 +123,8 @@ export class StorageService {
       dossiers: [],
       suivisOF: [],
       mouvements: [],
-      clientCodifications: INITIAL_CLIENT_CODIFICATIONS
+      clientCodifications: INITIAL_CLIENT_CODIFICATIONS,
+      fichesTransfert: []
     };
   }
 
@@ -664,6 +672,64 @@ export class StorageService {
     } catch (e: any) {
       console.error('Erreur suppression codification client:', e);
       logger.error('Codification Clients', `Erreur suppression codification ID ${id}.`, { error: e.message });
+      throw e;
+    }
+  }
+
+  // =========================================================================
+  // FICHES DE TRANSFERT & BONS DE LIVRAISON TRANSPORTEUR
+  // =========================================================================
+
+  static async getFichesTransfert(): Promise<FicheTransfert[]> {
+    try {
+      const res = await this.request('/api/fiches-transfert');
+      const json = await res.json();
+      if (json.success && Array.isArray(json.data)) {
+        return json.data;
+      }
+    } catch (e: any) {
+      console.error('Erreur chargement fiches transfert:', e);
+    }
+    return [];
+  }
+
+  static async saveFichesTransfert(fiches: FicheTransfert[]): Promise<void> {
+    try {
+      await this.request('/api/fiches-transfert', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(fiches)
+      });
+      logger.sqlite('Fiches Transfert', `${fiches.length} fiche(s) de transfert enregistrée(s) dans SQLite.`);
+    } catch (e: any) {
+      console.error('Erreur sauvegarde fiches transfert:', e);
+      logger.error('Fiches Transfert', `Erreur sauvegarde fiches transfert.`, { error: e.message });
+      throw e;
+    }
+  }
+
+  static async upsertFicheTransfert(fiche: FicheTransfert): Promise<void> {
+    try {
+      await this.request('/api/fiches-transfert', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(fiche)
+      });
+      logger.sqlite('Fiche Transfert', `Fiche de transfert N° ${fiche.numeroFiche} (${fiche.monClient}) enregistrée / validée.`);
+    } catch (e: any) {
+      console.error('Erreur upsert fiche transfert:', e);
+      logger.error('Fiche Transfert', `Erreur mise à jour fiche transfert "${fiche.numeroFiche}".`, { error: e.message });
+      throw e;
+    }
+  }
+
+  static async deleteFicheTransfert(id: string): Promise<void> {
+    try {
+      await this.request(`/api/fiches-transfert/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      logger.sqlite('Fiche Transfert', `Fiche de transfert ID ${id} supprimée de SQLite.`);
+    } catch (e: any) {
+      console.error('Erreur suppression fiche transfert:', e);
+      logger.error('Fiche Transfert', `Erreur suppression fiche transfert ID ${id}.`, { error: e.message });
       throw e;
     }
   }

@@ -11,7 +11,7 @@ import { DocumentationTab } from './components/tabs/DocumentationTab';
 import { HistoriqueTab } from './components/tabs/HistoriqueTab';
 import { OrdresEnCoursTab } from './components/tabs/OrdresEnCoursTab';
 import { StorageService } from './services/storage';
-import { Article, ChuteItem, ChuteMaille, MappingChutes, DossierCommandeGlobal, SuiviOF, MouvementStock } from './types';
+import { Article, ChuteItem, ChuteMaille, MappingChutes, DossierCommandeGlobal, SuiviOF, MouvementStock, ClientCodification, FicheTransfert } from './types';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<string>('ecosysteme');
@@ -25,6 +25,8 @@ export default function App() {
   const [dossiers, setDossiers] = useState<DossierCommandeGlobal[]>([]);
   const [suivisOF, setSuivisOF] = useState<SuiviOF[]>([]);
   const [mouvements, setMouvements] = useState<MouvementStock[]>([]);
+  const [clientCodifications, setClientCodifications] = useState<ClientCodification[]>([]);
+  const [fichesTransfert, setFichesTransfert] = useState<FicheTransfert[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
   // Chargement direct depuis SQLite
@@ -38,6 +40,8 @@ export default function App() {
       setDossiers(data.dossiers);
       setSuivisOF(data.suivisOF);
       setMouvements(data.mouvements);
+      setClientCodifications(data.clientCodifications);
+      setFichesTransfert(data.fichesTransfert);
     } catch (err) {
       console.error('Erreur chargement SQLite:', err);
     } finally {
@@ -99,6 +103,9 @@ export default function App() {
         {activeTab === 'encours' && (
           <OrdresEnCoursTab
             suivisOF={suivisOF}
+            dossiers={dossiers}
+            clientCodifications={clientCodifications}
+            fichesTransfert={fichesTransfert}
             onRefreshData={loadData}
             articles={articles}
             chutesBarres={chutesBarres}

@@ -224,6 +224,8 @@ export interface CommandePrecadre {
 
 export type FamilleProduit = 'TABLIER' | 'MOUSTIQUAIRE' | 'CAISSON' | 'PRECADRE';
 
+export type StatutDossier = 'BROUILLON' | 'EN_ATTENTE' | 'EN_COURS' | 'OPTIMISE' | 'FABRIQUE' | 'CLOTURE' | 'LIVRE' | 'TERMINE';
+
 export interface DossierCommandeGlobal {
   id: string;
   donneurOrdre: string; // ex: "SOMADAL Alger", "CRISTAL Alger", "ATELIER Alger"
@@ -241,7 +243,43 @@ export interface DossierCommandeGlobal {
   articlesCaissons: CommandeCaisson[];
   articlesPrecadres: CommandePrecadre[];
   notes?: string;
-  statut: 'BROUILLON' | 'EN_ATTENTE' | 'EN_COURS' | 'OPTIMISE' | 'FABRIQUE';
+  statut: StatutDossier;
+  ficheTransfertId?: string; // ID de la fiche de transfert associée lors de la livraison
+  dateLivraison?: string;    // Date de remise au transporteur
+  nomChauffeur?: string;     // Nom du chauffeur transporteur
+}
+
+// ============================================================================
+// FICHE DE TRANSFERT / BON DE LIVRAISON TRANSPORTEUR
+// ============================================================================
+
+export interface LigneFicheTransfert {
+  id: string;
+  dossierId?: string;
+  ofId?: string;
+  nomChauffeur: string;
+  numCommande: string;
+  clientDeMonClient: string; // Le client final du client
+  familleProduit: FamilleProduit | string; // PRÉCADRE, MOUSTIQUAIRE, CAISSON, TABLIER...
+  quantiteArticles: number;  // Nombre de pièces / unités
+  designationDetail?: string; // ex: "4 Précadres (dim 1200x1400)", "2 Caissons + 2 Sous-faces"
+  remarques?: string;
+}
+
+export interface FicheTransfert {
+  id: string;
+  numeroFiche: string;       // ex: "FT-2026-001"
+  monClient: string;         // Nom de mon client (Donneur d'ordre, ex: SOMADAL Alger, CRISTAL Oran)
+  nomChauffeurPrincipal?: string; // Nom du chauffeur
+  matriculeVehicule?: string;// Matricule véhicule (optionnel)
+  telephoneChauffeur?: string; // Téléphone chauffeur (optionnel)
+  dateLivraison: string;     // Date de livraison (DD/MM/YYYY)
+  lignes: LigneFicheTransfert[];
+  visaChauffeur?: string;    // Nom / Signature chauffeur
+  visaAtelier?: string;      // Nom / Visa responsable atelier
+  statut: 'VALIDEE' | 'EN_PREPARATION' | 'ANNULEE';
+  notes?: string;
+  createdAt?: string;
 }
 
 export interface ResultatMoustiquaire {
