@@ -1,0 +1,8 @@
+{
+  "name": "3M Atelier — Optimisation de Découpe & Gestion de Stock",
+  "description": "Système professionnel d'optimisation de découpe 1D aluminium (Matière vs Temps), calcul de tabliers volets roulants, toiles moustiquaires plissées et gestion des chutes d'atelier.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
